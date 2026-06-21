@@ -1,0 +1,9 @@
+(* Source files for sml-graph, in dependency order. Pulls in the vendored
+   sml-pqueue sources (PairingHeap functor used by Prim's MST) it builds on. *)
+
+$(SML_LIB)/basis/basis.mlb
+
+../sml-pqueue/sources.mlb
+
+graph.sig
+graph.sml

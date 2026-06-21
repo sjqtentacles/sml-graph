@@ -1,0 +1,8 @@
+(* Source files for the sml-pqueue library, in dependency order.
+   Vendored into sml-graph; brings the ORDERED/PQUEUE signatures, the
+   PairingHeap functor, and the IntPQueue instance into scope. *)
+
+$(SML_LIB)/basis/basis.mlb
+
+pqueue.sig
+pqueue.sml

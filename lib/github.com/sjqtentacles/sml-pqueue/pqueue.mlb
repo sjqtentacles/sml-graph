@@ -1,0 +1,9 @@
+(* MLton basis file for the sml-pqueue library.
+ * Brings the ORDERED/PQUEUE signatures, the PairingHeap functor, and the
+ * IntPQueue instance into scope. *)
+local
+  $(SML_LIB)/basis/basis.mlb
+in
+  pqueue.sig
+  pqueue.sml
+end

@@ -1,0 +1,6 @@
+(* sml-graph: public library basis. Re-exports the vendored sml-pqueue
+   plus the graph sources, so a consumer gets the Graph structure. *)
+
+$(SML_LIB)/basis/basis.mlb
+
+sources.mlb
