@@ -23,6 +23,7 @@ deterministic output across both.
 make test        # build + run the suite under MLton (default)
 make test-poly   # run the suite under Poly/ML
 make all-tests   # run under both
+make example     # build + run the demo
 make clean
 ```
 
@@ -95,6 +96,29 @@ val apsp' = Graph.johnson d                      (* SOME (n*n matrix)        *)
 | `floydWarshall : t -> real array array` | All-pairs shortest paths (dense). |
 | `johnson : t -> real array array option` | All-pairs for sparse graphs; `NONE` on a negative cycle. |
 | `shortestPath : t -> {from:int, to:int} -> (int list * real) option` | Reconstructed path + cost (handles negative edges). |
+
+## Example
+
+[`examples/demo.sml`](examples/demo.sml) builds a fixed directed weighted DAG
+and a fixed undirected weighted graph, then runs traversal, topological sort,
+Dijkstra, shortest-path reconstruction, connected components, and an MST. Edge
+weights are integers, so distances are exact and print via `Real.round`
+(unreachable vertices show `inf`); list results are deterministic by the
+ascending-id tie-break. Run it with:
+
+```
+$ make example
+Directed weighted graph (6 vertices):
+  bfs from 0 : 0 1 2 3 4
+  dfs from 0 : 0 1 3 4 2
+  topoSort   : 0 2 1 3 4 5
+  dijkstra distances from 0: [0 3 1 4 7 inf]
+  shortestPath 0 -> 4: 0 2 1 3 4  (cost 7)
+
+Undirected weighted graph (5 vertices):
+  connectedComponents : 0 1 2 3 4
+  minimum spanning tree: 0-1(1), 1-2(2), 2-3(3), 3-4(1)
+```
 
 ## Installing with smlpkg
 
