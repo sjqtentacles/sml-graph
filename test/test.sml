@@ -138,6 +138,121 @@ struct
       val gpar = Graph.fromEdges true 2 [(0,1,3.0),(0,1,5.0)]
       val () = checkBool "parallel arcs sum"
                  (true, Real.== (Graph.maxFlow gpar {source=0, sink=1}, 8.0))
+
+      (* ================= Shortest paths ================= *)
+
+      (* Element-wise real comparison helpers (distances here are exact
+         integer-valued reals, including Real.posInf for unreachable, so exact
+         equality is deterministic across compilers). *)
+      fun arrToList a = Array.foldr (op ::) [] a
+      fun realListEq (xs, ys) =
+        List.length xs = List.length ys andalso ListPair.all Real.== (xs, ys)
+      fun realArrEq (a, ys) = realListEq (arrToList a, ys)
+      fun matToLists m = List.map arrToList (arrToList m)
+      fun matEq (m, rows) =
+        let val ms = matToLists m
+        in List.length ms = List.length rows
+           andalso ListPair.all realListEq (ms, rows)
+        end
+
+      val () = section "dijkstra (CLRS single-source, sml-pqueue)"
+      (* CLRS Fig 24.6 directed graph: s=0 t=1 x=2 y=3 z=4.
+         Known distances from s: s=0, t=8, x=9, y=5, z=7. *)
+      val gsp = Graph.fromEdges true 5
+                  [(0,1,10.0),(0,3,5.0),
+                   (1,2,1.0),(1,3,2.0),
+                   (2,4,4.0),
+                   (3,1,3.0),(3,2,9.0),(3,4,2.0),
+                   (4,2,6.0),(4,0,7.0)]
+      val {dist = dDist, pred = dPred} = Graph.dijkstra gsp 0
+      val () = checkBool "dijkstra distances"
+                 (true, realArrEq (dDist, [0.0, 8.0, 9.0, 5.0, 7.0]))
+      val () = checkIntList "dijkstra predecessors"
+                 ([~1, 3, 1, 0, 3], arrToList dPred)
+      (* Reconstructed path s(0) -> x(2): 0 -> 3 -> 1 -> 2, cost 9. *)
+      val () =
+        (case Graph.shortestPath gsp {from = 0, to = 2} of
+             SOME (path, cost) =>
+               (checkIntList "shortestPath 0->2 route" ([0,3,1,2], path);
+                checkBool "shortestPath 0->2 cost" (true, Real.== (cost, 9.0)))
+           | NONE => checkBool "shortestPath 0->2 exists" (true, false))
+      (* Trivial self path. *)
+      val () =
+        (case Graph.shortestPath gsp {from = 0, to = 0} of
+             SOME (path, cost) =>
+               (checkIntList "shortestPath 0->0 route" ([0], path);
+                checkBool "shortestPath 0->0 cost" (true, Real.== (cost, 0.0)))
+           | NONE => checkBool "shortestPath 0->0 exists" (true, false))
+      (* Unreachable: add an isolated vertex 5. *)
+      val gIso = Graph.fromEdges true 6
+                   [(0,1,10.0),(0,3,5.0),
+                    (1,2,1.0),(1,3,2.0),
+                    (2,4,4.0),
+                    (3,1,3.0),(3,2,9.0),(3,4,2.0),
+                    (4,2,6.0),(4,0,7.0)]
+      val {dist = dIso, ...} = Graph.dijkstra gIso 0
+      val () = checkBool "dijkstra unreachable = posInf"
+                 (true, Real.== (Array.sub (dIso, 5), Real.posInf))
+      val () = checkBool "shortestPath unreachable = NONE"
+                 (true, not (Option.isSome (Graph.shortestPath gIso {from = 0, to = 5})))
+
+      val () = section "bellmanFord (negative edges + cycle detection)"
+      (* CLRS Fig 24.4: s=0 t=1 x=2 y=3 z=4, negative edges, no negative cycle.
+         Known distances from s: s=0, t=2, x=4, y=7, z=-2. *)
+      val gbf = Graph.fromEdges true 5
+                  [(0,1,6.0),(0,3,7.0),
+                   (1,2,5.0),(1,3,8.0),(1,4,~4.0),
+                   (2,1,~2.0),
+                   (3,2,~3.0),(3,4,9.0),
+                   (4,2,7.0),(4,0,2.0)]
+      val () =
+        (case Graph.bellmanFord gbf 0 of
+             SOME {dist, ...} =>
+               checkBool "bellmanFord distances (negative edges)"
+                 (true, realArrEq (dist, [0.0, 2.0, 4.0, 7.0, ~2.0]))
+           | NONE => checkBool "bellmanFord should succeed" (true, false))
+      (* Dijkstra and Bellman-Ford agree on the non-negative CLRS graph. *)
+      val () =
+        (case Graph.bellmanFord gsp 0 of
+             SOME {dist, ...} =>
+               checkBool "dijkstra and bellmanFord agree"
+                 (true, realListEq (arrToList dist, arrToList dDist))
+           | NONE => checkBool "bellmanFord should succeed (gsp)" (true, false))
+      (* Negative-weight cycle reachable from source => NONE. *)
+      val gneg = Graph.fromEdges true 3 [(0,1,1.0),(1,2,~1.0),(2,0,~1.0)]
+      val () = checkBool "bellmanFord detects negative cycle"
+                 (true, Graph.bellmanFord gneg 0 = NONE)
+
+      val () = section "floydWarshall (all-pairs)"
+      (* Floyd-Warshall matches repeated Dijkstra on the non-negative graph. *)
+      val fw = Graph.floydWarshall gsp
+      val fwExpected =
+        List.tabulate (5, fn i =>
+          let val {dist, ...} = Graph.dijkstra gsp i in arrToList dist end)
+      val () = checkBool "floydWarshall = repeated dijkstra"
+                 (true, matEq (fw, fwExpected))
+      val () = checkBool "floydWarshall diagonal zero"
+                 (true, Real.== (Array.sub (Array.sub (fw, 2), 2), 0.0))
+
+      val () = section "johnson (all-pairs, sparse)"
+      (* Johnson matches Floyd-Warshall on the sparse CLRS Bellman-Ford graph
+         (negative edges, no negative cycle). *)
+      val () =
+        (case Graph.johnson gbf of
+             SOME jm =>
+               checkBool "johnson = floydWarshall (sparse, negative edges)"
+                 (true, matEq (jm, matToLists (Graph.floydWarshall gbf)))
+           | NONE => checkBool "johnson should succeed" (true, false))
+      (* Johnson also matches on the non-negative graph. *)
+      val () =
+        (case Graph.johnson gsp of
+             SOME jm =>
+               checkBool "johnson = floydWarshall (non-negative)"
+                 (true, matEq (jm, matToLists (Graph.floydWarshall gsp)))
+           | NONE => checkBool "johnson should succeed (gsp)" (true, false))
+      (* Johnson returns NONE on a negative cycle. *)
+      val () = checkBool "johnson detects negative cycle"
+                 (true, Graph.johnson gneg = NONE)
     in
       ()
     end

@@ -401,4 +401,290 @@ struct
     in
       if source = sink then 0.0 else loop 0.0
     end
+
+  (* ---- Shortest paths ---- *)
+
+  (* PQ keyed by (tentative distance, vertex). Ordering on the vertex id breaks
+     equal-distance ties deterministically, matching the ascending-id rule. *)
+  structure DistOrder : ORDERED =
+  struct
+    type t = real * int
+    fun compare ((d1, v1), (d2, v2)) =
+      case Real.compare (d1, d2) of EQUAL => Int.compare (v1, v2) | o' => o'
+  end
+  structure DistPQ = PairingHeap (DistOrder)
+
+  (* Dijkstra with lazy deletion: a vertex may be enqueued multiple times; the
+     `done` flag discards stale pops. Relaxes neighbours in ascending order. *)
+  fun dijkstra (g as {adj, ...} : t) src =
+    let
+      val () = checkV g src
+      val n = Vector.length adj
+      val dist = Array.array (n, Real.posInf)
+      val pred = Array.array (n, ~1)
+      val done = Array.array (n, false)
+      val () = Array.update (dist, src, 0.0)
+      fun loop q =
+        case DistPQ.deleteMin q of
+            NONE => ()
+          | SOME ((d, u), q') =>
+              if Array.sub (done, u) then loop q'
+              else
+                let
+                  val () = Array.update (done, u, true)
+                  val q'' =
+                    List.foldl
+                      (fn ((v, w), acc) =>
+                         ( if w < 0.0 then
+                             raise Graph "dijkstra: negative edge weight"
+                           else ()
+                         ; let val nd = d + w
+                           in if nd < Array.sub (dist, v) then
+                                ( Array.update (dist, v, nd)
+                                ; Array.update (pred, v, u)
+                                ; DistPQ.insert ((nd, v), acc) )
+                              else acc
+                           end ))
+                      q' (Vector.sub (adj, u))
+                in
+                  loop q''
+                end
+    in
+      loop (DistPQ.insert ((0.0, src), DistPQ.empty));
+      {dist = dist, pred = pred}
+    end
+
+  (* Bellman-Ford from `src`. Relax all edges up to n-1 times (early-exit once a
+     pass makes no change), then one extra pass: if any edge can still relax,
+     a negative-weight cycle is reachable from `src`. Edges are scanned in
+     (source vertex, ascending neighbour) order for deterministic predecessors. *)
+  fun bellmanFord (g as {adj, ...} : t) src =
+    let
+      val () = checkV g src
+      val n = Vector.length adj
+      val dist = Array.array (n, Real.posInf)
+      val pred = Array.array (n, ~1)
+      val () = Array.update (dist, src, 0.0)
+      fun relaxOnce () =
+        let
+          val changed = ref false
+          val () =
+            Vector.appi
+              (fn (u, lst) =>
+                 if Real.== (Array.sub (dist, u), Real.posInf) then ()
+                 else
+                   List.app
+                     (fn (v, w) =>
+                        let val nd = Array.sub (dist, u) + w
+                        in if nd < Array.sub (dist, v) then
+                             ( Array.update (dist, v, nd)
+                             ; Array.update (pred, v, u)
+                             ; changed := true )
+                           else ()
+                        end)
+                     lst)
+              adj
+        in
+          !changed
+        end
+      fun iterate 0 = ()
+        | iterate k = if relaxOnce () then iterate (k - 1) else ()
+      val () = iterate (n - 1)
+      fun anyRelax () =
+        let
+          val found = ref false
+          val () =
+            Vector.appi
+              (fn (u, lst) =>
+                 if Real.== (Array.sub (dist, u), Real.posInf) then ()
+                 else
+                   List.app
+                     (fn (v, w) =>
+                        if Array.sub (dist, u) + w < Array.sub (dist, v)
+                        then found := true else ())
+                     lst)
+              adj
+        in
+          !found
+        end
+    in
+      if anyRelax () then NONE else SOME {dist = dist, pred = pred}
+    end
+
+  (* Floyd-Warshall. Parallel edges collapse to their minimum weight. The
+     diagonal starts at 0.0; a negative cycle drives some diagonal entry below
+     0, which callers can detect (johnson reports this as NONE). *)
+  fun floydWarshall ({adj, ...} : t) =
+    let
+      val n = Vector.length adj
+      val m = Array.tabulate (n, fn _ => Array.array (n, Real.posInf))
+      fun row i = Array.sub (m, i)
+      val verts = List.tabulate (n, fn x => x)
+      val () = List.app (fn i => Array.update (row i, i, 0.0)) verts
+      val () =
+        Vector.appi
+          (fn (u, lst) =>
+             List.app
+               (fn (v, w) =>
+                  if w < Array.sub (row u, v)
+                  then Array.update (row u, v, w) else ())
+               lst)
+          adj
+      fun forK k =
+        if k >= n then ()
+        else
+          let val rk = row k in
+            List.app
+              (fn i =>
+                 let
+                   val ri = row i
+                   val dik = Array.sub (ri, k)
+                 in
+                   if Real.== (dik, Real.posInf) then ()
+                   else
+                     List.app
+                       (fn j =>
+                          let val through = dik + Array.sub (rk, j)
+                          in if through < Array.sub (ri, j)
+                             then Array.update (ri, j, through) else ()
+                          end)
+                       verts
+                 end)
+              verts;
+            forK (k + 1)
+          end
+      val () = forK 0
+    in
+      m
+    end
+
+  (* Johnson's algorithm: reweight with a potential h obtained from a virtual
+     super-source (Bellman-Ford), then run Dijkstra from every vertex on the
+     non-negative reweighted graph and undo the reweighting. NONE on a negative
+     cycle. The super-source has a zero-weight arc to every vertex, which is
+     equivalent to initialising all potentials to 0.0 (no graph copy needed). *)
+  fun johnson ({adj, ...} : t) =
+    let
+      val n = Vector.length adj
+      val h = Array.array (n, 0.0)
+      val verts = List.tabulate (n, fn x => x)
+      fun relaxOnce () =
+        let
+          val changed = ref false
+          val () =
+            Vector.appi
+              (fn (u, lst) =>
+                 List.app
+                   (fn (v, w) =>
+                      let val nd = Array.sub (h, u) + w
+                      in if nd < Array.sub (h, v)
+                         then (Array.update (h, v, nd); changed := true)
+                         else ()
+                      end)
+                   lst)
+              adj
+        in
+          !changed
+        end
+      (* n vertices + virtual source = n+1, so n relaxation passes suffice. *)
+      fun iterate 0 = ()
+        | iterate k = if relaxOnce () then iterate (k - 1) else ()
+      val () = iterate n
+      fun anyRelax () =
+        let
+          val found = ref false
+          val () =
+            Vector.appi
+              (fn (u, lst) =>
+                 List.app
+                   (fn (v, w) =>
+                      if Array.sub (h, u) + w < Array.sub (h, v)
+                      then found := true else ())
+                   lst)
+              adj
+        in
+          !found
+        end
+      (* Dijkstra over reweighted edges w'(u,v) = w + h(u) - h(v) >= 0. *)
+      fun dijkstraRW src =
+        let
+          val dist = Array.array (n, Real.posInf)
+          val done = Array.array (n, false)
+          val () = Array.update (dist, src, 0.0)
+          fun loop q =
+            case DistPQ.deleteMin q of
+                NONE => ()
+              | SOME ((d, u), q') =>
+                  if Array.sub (done, u) then loop q'
+                  else
+                    ( Array.update (done, u, true)
+                    ; loop
+                        (List.foldl
+                           (fn ((v, w), acc) =>
+                              let
+                                val rw = w + Array.sub (h, u) - Array.sub (h, v)
+                                val nd = d + rw
+                              in
+                                if nd < Array.sub (dist, v) then
+                                  ( Array.update (dist, v, nd)
+                                  ; DistPQ.insert ((nd, v), acc) )
+                                else acc
+                              end)
+                           q' (Vector.sub (adj, u))) )
+        in
+          loop (DistPQ.insert ((0.0, src), DistPQ.empty));
+          dist
+        end
+    in
+      if anyRelax () then NONE
+      else
+        let
+          val out = Array.tabulate (n, fn _ => Array.array (n, Real.posInf))
+          val () =
+            List.app
+              (fn u =>
+                 let
+                   val d' = dijkstraRW u
+                   val ru = Array.sub (out, u)
+                 in
+                   List.app
+                     (fn v =>
+                        let val dv = Array.sub (d', v)
+                        in if Real.== (dv, Real.posInf) then ()
+                           else Array.update
+                                  (ru, v,
+                                   dv + Array.sub (h, v) - Array.sub (h, u))
+                        end)
+                     verts
+                 end)
+              verts
+        in
+          SOME out
+        end
+    end
+
+  (* Reconstruct a shortest path via Bellman-Ford predecessors (so negative
+     edges are handled and reachable negative cycles yield NONE). *)
+  fun shortestPath (g : t) {from, to} =
+    let
+      val () = checkV g from
+      val () = checkV g to
+    in
+      case bellmanFord g from of
+          NONE => NONE
+        | SOME {dist, pred} =>
+            if Real.== (Array.sub (dist, to), Real.posInf) then NONE
+            else
+              let
+                fun build (v, acc) =
+                  if v = from then SOME (from :: acc)
+                  else
+                    let val p = Array.sub (pred, v)
+                    in if p = ~1 then NONE else build (p, v :: acc) end
+              in
+                case build (to, []) of
+                    NONE => NONE
+                  | SOME path => SOME (path, Array.sub (dist, to))
+              end
+    end
 end

@@ -4,11 +4,12 @@
 
 General-purpose graph algorithms for Standard ML over integer-vertex graphs:
 traversal, topological sort, connected and strongly-connected components,
-minimum spanning tree, and maximum flow.
+minimum spanning tree, maximum flow, and shortest paths (Dijkstra,
+Bellman-Ford, Floyd-Warshall, Johnson).
 
 Part of the `sjqtentacles` monorepo of SML libraries. It builds on
 [`sml-pqueue`](https://github.com/sjqtentacles/sml-pqueue) (vendored), whose
-pairing heap drives Prim's MST.
+pairing heap drives both Prim's MST and Dijkstra's shortest paths.
 
 ## Portability
 
@@ -58,6 +59,18 @@ val d = Graph.fromEdges true 3 [(0,1,1.0),(1,2,1.0)]
 val topo = Graph.topoSort d                     (* SOME [0,1,2]             *)
 val sccs = Graph.stronglyConnected d            (* [[0],[1],[2]]            *)
 val flow = Graph.maxFlow d {source = 0, sink = 2}
+
+(* Shortest paths. Distances are reals, with Real.posInf for unreachable
+   vertices and a pred array (~1 for the source / unreachable). *)
+val {dist, pred} = Graph.dijkstra d 0           (* single-source, non-neg   *)
+val path = Graph.shortestPath d {from = 0, to = 2}  (* SOME ([0,1,2], 2.0)  *)
+
+(* Negative edges (Bellman-Ford): NONE iff a reachable negative cycle. *)
+val bf  = Graph.bellmanFord d 0                 (* SOME {dist, pred}        *)
+
+(* All-pairs: Floyd-Warshall (dense) or Johnson (sparse, NONE on neg cycle). *)
+val apsp  = Graph.floydWarshall d               (* n*n real matrix          *)
+val apsp' = Graph.johnson d                      (* SOME (n*n matrix)        *)
 ```
 
 ## API summary
@@ -77,6 +90,11 @@ val flow = Graph.maxFlow d {source = 0, sink = 2}
 | `stronglyConnected : t -> int list list` | Tarjan's SCCs (directed). |
 | `mst : t -> (int*int*real) list` | Prim's MST/forest via `sml-pqueue`. |
 | `maxFlow : t -> {source:int, sink:int} -> real` | Edmonds-Karp max flow. |
+| `dijkstra : t -> int -> {dist:real array, pred:int array}` | Single-source shortest paths, non-negative weights, via `sml-pqueue`. |
+| `bellmanFord : t -> int -> {dist:real array, pred:int array} option` | Single-source with negative edges; `NONE` on a reachable negative cycle. |
+| `floydWarshall : t -> real array array` | All-pairs shortest paths (dense). |
+| `johnson : t -> real array array option` | All-pairs for sparse graphs; `NONE` on a negative cycle. |
+| `shortestPath : t -> {from:int, to:int} -> (int list * real) option` | Reconstructed path + cost (handles negative edges). |
 
 ## Installing with smlpkg
 

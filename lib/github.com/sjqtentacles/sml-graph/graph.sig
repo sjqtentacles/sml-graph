@@ -99,4 +99,46 @@ sig
      are non-negative capacities (Edmonds-Karp: BFS augmenting paths).
      Parallel arcs' capacities sum. *)
   val maxFlow     : t -> {source : int, sink : int} -> real
+
+  (* ---- Shortest paths ---- *)
+
+  (* Conventions shared by the shortest-path routines: distances are `real`
+     and an unreachable vertex has distance `Real.posInf`. A `pred` array gives,
+     for each vertex, the previous vertex on a shortest path from the source,
+     or `~1` for the source itself and for any unreachable vertex. The arrays
+     returned are fresh, indexed by vertex id, and of length `numVertices`.
+     Equal-cost ties are broken deterministically by the ascending-id rule, so
+     the predecessor arrays are identical across compilers. *)
+
+  (* Single-source shortest paths from `src` over NON-NEGATIVE edge weights,
+     using the vendored sml-pqueue (Dijkstra). Raises `Graph` if `src` is out
+     of range, or if a negative edge weight is encountered while relaxing. *)
+  val dijkstra     : t -> int -> {dist : real array, pred : int array}
+
+  (* Single-source shortest paths from `src` allowing negative edge weights
+     (Bellman-Ford). Returns `NONE` iff there is a negative-weight cycle
+     reachable from `src` (in which case no well-defined shortest paths exist);
+     otherwise `SOME {dist, pred}` with the usual posInf/`~1` conventions.
+     Raises `Graph` if `src` is out of range. *)
+  val bellmanFord  : t -> int -> {dist : real array, pred : int array} option
+
+  (* All-pairs shortest paths (Floyd-Warshall). Result `m` is an `n*n` matrix
+     with `m[i][j]` the shortest distance from i to j (`0.0` on the diagonal in
+     the absence of a negative self-loop, `Real.posInf` when j is unreachable
+     from i). If the graph has a negative-weight cycle, some diagonal entry
+     `m[i][i]` is negative; callers wanting cycle-safety should use `johnson`. *)
+  val floydWarshall : t -> real array array
+
+  (* All-pairs shortest paths via Johnson's algorithm (Bellman-Ford reweighting
+     followed by a Dijkstra from each vertex), suited to sparse graphs. Returns
+     `NONE` iff the graph contains a negative-weight cycle; otherwise `SOME m`
+     with the same `n*n` distance-matrix layout as `floydWarshall`. *)
+  val johnson      : t -> real array array option
+
+  (* A shortest path from `from` to `to`, as the list of vertices on the path
+     (inclusive of both endpoints) paired with its total cost. Handles negative
+     edge weights (Bellman-Ford based). Returns `NONE` when `to` is unreachable
+     from `from`, or when a negative-weight cycle reachable from `from` makes
+     the distance ill-defined. Raises `Graph` if an endpoint is out of range. *)
+  val shortestPath : t -> {from : int, to : int} -> (int list * real) option
 end
